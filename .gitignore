@@ -1,0 +1,14 @@
+/bin/
+/cmd/*/dist/
+.vscode/
+.idea/
+*.log
+.env
+*.local.yaml
+/go.sum
+/go.work
+/go.work.sum
+docker-compose.override.yml
+__pycache__/
+*.pyc
+scripts/.venv/

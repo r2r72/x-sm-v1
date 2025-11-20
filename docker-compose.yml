@@ -1,0 +1,19 @@
+version: '3.8'
+services:
+  postgres:
+    image: postgres:16
+    environment: &pg_env
+      POSTGRES_DB: esm
+      POSTGRES_USER: esm
+      POSTGRES_PASSWORD: esm
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment: &minio_env
+      MINIO_ROOT_USER: esm
+      MINIO_ROOT_PASSWORD: esm12345
+    ports: ["9000:9000", "9001:9001"]
+    volumes: ["miniodata:/data"]
+volumes: {pgdata: {}, miniodata: {}}
