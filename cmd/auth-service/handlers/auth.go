@@ -20,7 +20,7 @@ import (
 	"net/http"
 	"time"
 
-	authsvc "github.com/yourname/esm-platform/internal/service/auth"
+	authsvc "github.com/r2r72/x-sm-v1/internal/service/auth"
 )
 
 // RegisterAuthRoutes регистрирует все маршруты аутентификации.
