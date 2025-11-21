@@ -11,7 +11,7 @@
 //   - JWT HS256 (секрет 32+ байта)
 //   - TOTP по RFC 6238 (алгоритм SHA1, 30s, 6 цифр)
 //   - Все операции аудируются
-package service
+package auth
 
 import (
 	"context"
