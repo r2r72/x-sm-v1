@@ -12,3 +12,4 @@ docker-compose.override.yml
 __pycache__/
 *.pyc
 scripts/.venv/
+.env
