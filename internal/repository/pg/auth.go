@@ -1,106 +1,94 @@
-// Package pg содержит реализацию AuthRepository для PostgreSQL.
-//
-// Важно:
-//   - Все запросы используют parameterized queries (защита от SQL-инъекций)
-//   - Таймауты контекста
-//   - Логирование медленных запросов (>100ms)
+// internal/repository/pg/auth.go
 package pg
 
 import (
 	"context"
-	"database/sql"
-	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/yourname/esm-platform/internal/service"
+	auth "github.com/r2r72/x-sm-v1/internal/service/auth"
 )
 
-// AuthRepository — реализация для PostgreSQL.
 type AuthRepository struct {
 	db *pgxpool.Pool
 }
 
-// NewAuthRepository создаёт новый репозиторий.
 func NewAuthRepository(db *pgxpool.Pool) *AuthRepository {
 	return &AuthRepository{db: db}
 }
 
-// CreateUser создаёт нового пользователя.
-func (r *AuthRepository) CreateUser(ctx context.Context, u *service.User) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
+func (r *AuthRepository) CreateUser(ctx context.Context, u *auth.User) error {
 	_, err := r.db.Exec(ctx,
-		`INSERT INTO auth.users (id, tenant_id, username, email, password_hash, mfa_enabled, mfa_secret_encrypted, active)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		u.ID, u.TenantID, u.Username, u.Email, u.PasswordHash, u.MFAEnabled,
-		encryptMFASecret(u.MFASecret), // ← в продакшене — шифрование
-		u.Active,
+		`INSERT INTO auth.users (id, tenant_id, username, email, password_hash, mfa_enabled, active)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		u.ID, u.TenantID, u.Username, u.Email, u.PasswordHash, u.MFAEnabled, u.Active,
 	)
 	return err
 }
 
-// GetUserByUsername ищет пользователя по tenant_id + username.
-func (r *AuthRepository) GetUserByUsername(ctx context.Context, tenantID, username string) (*service.User, error) {
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-
+func (r *AuthRepository) GetUserByUsername(ctx context.Context, tenantID, username string) (*auth.User, error) {
 	row := r.db.QueryRow(ctx,
-		`SELECT id, tenant_id, username, email, password_hash, mfa_enabled, mfa_secret_encrypted, active
+		`SELECT id, tenant_id, username, email, password_hash, mfa_enabled, active
 		 FROM auth.users
 		 WHERE tenant_id = $1 AND username = $2 AND active = true`,
 		tenantID, username)
 
-	var u service.User
-	var mfaSecretEncrypted []byte
+	var u auth.User
 	err := row.Scan(
 		&u.ID, &u.TenantID, &u.Username, &u.Email, &u.PasswordHash,
-		&u.MFAEnabled, &mfaSecretEncrypted, &u.Active,
+		&u.MFAEnabled, &u.Active,
 	)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, service.ErrInvalidCredentials
+		if err == pgx.ErrNoRows {
+			return nil, auth.ErrInvalidCredentials
 		}
 		return nil, err
 	}
-
-	// Расшифровываем MFA-секрет (в продакшене — из Vault)
-	u.MFASecret = decryptMFASecret(mfaSecretEncrypted)
-
 	return &u, nil
 }
 
-// CreateSession создаёт временную сессию для MFA.
-func (r *AuthRepository) CreateSession(ctx context.Context, s *service.Session) error {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-
+func (r *AuthRepository) CreateSession(ctx context.Context, s *auth.Session) error {
 	_, err := r.db.Exec(ctx,
-		`INSERT INTO auth.sessions (id, user_id, tenant_id, token_hash, expires_at, ip_address, user_agent)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		s.ID, s.UserID, s.TenantID,
-		hashToken(s.ID), // ← не храним сам session_id в открытом виде
-		s.ExpiresAt,
-		"", "", // IP и UA можно добавить
+		`INSERT INTO auth.sessions (id, user_id, tenant_id, expires_at)
+		 VALUES ($1, $2, $3, $4)`,
+		s.ID, s.UserID, s.TenantID, s.ExpiresAt,
 	)
 	return err
 }
 
-// Остальные методы (GetSession, DeleteSession, LogLoginAttempt) — по аналогии.
+func (r *AuthRepository) GetSession(ctx context.Context, sessionID string) (*auth.Session, error) {
+	row := r.db.QueryRow(ctx,
+		`SELECT id, user_id, tenant_id, expires_at
+		 FROM auth.sessions
+		 WHERE id = $1 AND expires_at > NOW()`,
+		sessionID)
 
-// encryptMFASecret — заглушка для шифрования.
-// В продакшене: AES-GCM с ключом из Vault.
-func encryptMFASecret(secret string) []byte {
-	return []byte(secret) // ⚠️ Замените на реальное шифрование!
+	var s auth.Session
+	err := row.Scan(&s.ID, &s.UserID, &s.TenantID, &s.ExpiresAt)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, auth.ErrSessionExpired
+		}
+		return nil, err
+	}
+	return &s, nil
 }
 
-// decryptMFASecret — заглушка.
-func decryptMFASecret(data []byte) string {
-	return string(data) // ⚠️ Замените!
+func (r *AuthRepository) DeleteSession(ctx context.Context, sessionID string) error {
+	_, err := r.db.Exec(ctx, "DELETE FROM auth.sessions WHERE id = $1", sessionID)
+	return err
 }
 
-// hashToken создаёт хеш токена для безопасного хранения.
-func hashToken(token string) string {
-	// В реальности: bcrypt или sha256
-	return token // ⚠️ Замените!
+func (r *AuthRepository) DeleteSessionsByUser(ctx context.Context, userID string) error {
+	_, err := r.db.Exec(ctx, "DELETE FROM auth.sessions WHERE user_id = $1", userID)
+	return err
+}
+
+func (r *AuthRepository) LogLoginAttempt(ctx context.Context, a *auth.LoginAttempt) error {
+	_, err := r.db.Exec(ctx,
+		`INSERT INTO auth.login_attempts (tenant_id, username, ip_address, success, failure_reason, created_at)
+		 VALUES ($1, $2, $3, $4, $5, NOW())`,
+		a.TenantID, a.Username, a.IP, a.Success, a.Reason,
+	)
+	return err
 }

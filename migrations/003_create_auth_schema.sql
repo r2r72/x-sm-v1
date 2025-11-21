@@ -32,6 +32,27 @@ CREATE TABLE IF NOT EXISTS auth.users (
 CREATE INDEX IF NOT EXISTS idx_users_tenant_username 
 ON auth.users (tenant_id, username) WHERE active = true;
 
+CREATE TABLE IF NOT EXISTS auth.sessions (
+    id UUID PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    tenant_id UUID NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS auth.login_attempts (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    username TEXT NOT NULL,
+    ip_address INET NOT NULL,
+    user_agent TEXT,           -- ← добавлено
+    success BOOLEAN NOT NULL,
+    failure_reason TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON auth.sessions (user_id) WHERE expires_at > NOW();
+
 -- RLS
 ALTER TABLE auth.users ENABLE ROW LEVEL SECURITY;
 

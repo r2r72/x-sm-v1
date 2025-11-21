@@ -20,11 +20,11 @@ import (
 	"net/http"
 	"time"
 
-	authsvc "github.com/r2r72/x-sm-v1/internal/service/auth"
+	"github.com/r2r72/x-sm-v1/internal/service/auth"
 )
 
 // RegisterAuthRoutes регистрирует все маршруты аутентификации.
-func RegisterAuthRoutes(mux *http.ServeMux, svc *service.AuthService) {
+func RegisterAuthRoutes(mux *http.ServeMux, svc *auth.AuthService) {
 	mux.HandleFunc("POST /register", withError(handleRegister(svc)))
 	mux.HandleFunc("POST /login", withError(handleLogin(svc)))
 	mux.HandleFunc("POST /login/mfa", withError(handleLoginMFA(svc)))
@@ -80,7 +80,7 @@ type TokenResponse struct {
 // Тело запроса: JSON с RegisterRequest.
 // Успешный ответ (201): TokenResponse.
 // Ошибки: 400 (валидация), 409 (пользователь существует), 500.
-func handleRegister(svc *service.AuthService) func(http.ResponseWriter, *http.Request) error {
+func handleRegister(svc *auth.AuthService) func(http.ResponseWriter, *http.Request) error {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		var req RegisterRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -95,7 +95,7 @@ func handleRegister(svc *service.AuthService) func(http.ResponseWriter, *http.Re
 		}
 
 		// Регистрация
-		tokens, err := svc.Register(r.Context(), service.RegisterInput{
+		tokens, err := svc.Register(r.Context(), auth.RegisterInput{
 			TenantID: req.TenantID,
 			Username: req.Username,
 			Email:    req.Email,
@@ -108,10 +108,10 @@ func handleRegister(svc *service.AuthService) func(http.ResponseWriter, *http.Re
 		})
 		if err != nil {
 			switch err {
-			case service.ErrUserExists:
+			case auth.ErrUserExists:
 				http.Error(w, `{"error":"user already exists"}`, http.StatusConflict)
 				return nil
-			case service.ErrInvalidPassword:
+			case auth.ErrInvalidPassword:
 				http.Error(w, `{"error":"password too weak"}`, http.StatusBadRequest)
 				return nil
 			default:
@@ -132,7 +132,7 @@ func handleRegister(svc *service.AuthService) func(http.ResponseWriter, *http.Re
 // handleLogin — первый этап входа (логин/пароль).
 // Если MFA включён — возвращает session_id и требует /login/mfa.
 // Если нет — сразу выдаёт токены.
-func handleLogin(svc *service.AuthService) func(http.ResponseWriter, *http.Request) error {
+func handleLogin(svc *auth.AuthService) func(http.ResponseWriter, *http.Request) error {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		var req LoginRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -145,7 +145,7 @@ func handleLogin(svc *service.AuthService) func(http.ResponseWriter, *http.Reque
 			return nil
 		}
 
-		result, err := svc.Login(r.Context(), service.LoginInput{
+		result, err := svc.Login(r.Context(), auth.LoginInput{
 			TenantID:  req.TenantID,
 			Username:  req.Username,
 			Password:  req.Password,
@@ -154,10 +154,10 @@ func handleLogin(svc *service.AuthService) func(http.ResponseWriter, *http.Reque
 		})
 		if err != nil {
 			switch err {
-			case service.ErrInvalidCredentials:
+			case auth.ErrInvalidCredentials:
 				http.Error(w, `{"error":"invalid username or password"}`, http.StatusUnauthorized)
 				return nil
-			case service.ErrUserInactive:
+			case auth.ErrUserInactive:
 				http.Error(w, `{"error":"user account is inactive"}`, http.StatusForbidden)
 			default:
 				return err
@@ -186,7 +186,7 @@ func handleLogin(svc *service.AuthService) func(http.ResponseWriter, *http.Reque
 // handleLoginMFA — подтверждение входа через MFA (TOTP).
 // Тело: { "session_id": "...", "code": "123456" }
 // Успешно: 200 + TokenResponse.
-func handleLoginMFA(svc *service.AuthService) func(http.ResponseWriter, *http.Request) error {
+func handleLoginMFA(svc *auth.AuthService) func(http.ResponseWriter, *http.Request) error {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		var req MFARequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -197,10 +197,10 @@ func handleLoginMFA(svc *service.AuthService) func(http.ResponseWriter, *http.Re
 		tokens, err := svc.CompleteLoginWithMFA(r.Context(), req.SessionID, req.Code)
 		if err != nil {
 			switch err {
-			case service.ErrInvalidMFA:
+			case auth.ErrInvalidMFA:
 				http.Error(w, `{"error":"invalid mfa code"}`, http.StatusUnauthorized)
 				return nil
-			case service.ErrSessionExpired:
+			case auth.ErrSessionExpired:
 				http.Error(w, `{"error":"session expired"}`, http.StatusGone)
 				return nil
 			default:
@@ -223,7 +223,7 @@ type RefreshRequest struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
-func handleRefresh(svc *service.AuthService) func(http.ResponseWriter, *http.Request) error {
+func handleRefresh(svc *auth.AuthService) func(http.ResponseWriter, *http.Request) error {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		var req RefreshRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -234,7 +234,7 @@ func handleRefresh(svc *service.AuthService) func(http.ResponseWriter, *http.Req
 		tokens, err := svc.Refresh(r.Context(), req.RefreshToken)
 		if err != nil {
 			switch err {
-			case service.ErrInvalidToken:
+			case auth.ErrInvalidToken:
 				http.Error(w, `{"error":"invalid refresh token"}`, http.StatusUnauthorized)
 				return nil
 			default:
@@ -254,7 +254,7 @@ func handleRefresh(svc *service.AuthService) func(http.ResponseWriter, *http.Req
 // handleLogout — выход: отзыв текущей сессии.
 // Тело: { "refresh_token": "..." } (опционально)
 // Без тела — отзыв всех сессий пользователя (требует access-токен в заголовке).
-func handleLogout(svc *service.AuthService) func(http.ResponseWriter, *http.Request) error {
+func handleLogout(svc *auth.AuthService) func(http.ResponseWriter, *http.Request) error {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
@@ -262,7 +262,7 @@ func handleLogout(svc *service.AuthService) func(http.ResponseWriter, *http.Requ
 			return nil
 		}
 
-		// Извлекаем user_id из access-токена (без проверки срока — для выхода можно expired)
+		// ✅ Теперь вызываем метод сервиса
 		userID, err := svc.ParseTokenUnsafe(authHeader)
 		if err != nil {
 			http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)

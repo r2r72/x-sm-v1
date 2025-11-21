@@ -28,7 +28,7 @@ import (
 
 	"github.com/r2r72/x-sm-v1/cmd/auth-service/handlers"
 	"github.com/r2r72/x-sm-v1/internal/repository/pg"
-	"github.com/r2r72/x-sm-v1/internal/service"
+	"github.com/r2r72/x-sm-v1/internal/service/auth"
 )
 
 // Config — параметры запуска сервиса.
@@ -37,6 +37,9 @@ type Config struct {
 	DBURL  string
 	Secret string // для JWT (в prod — из Vault)
 }
+
+// 🔑 Compile-time check: гарантирует, что pg.AuthRepository реализует auth.AuthRepository
+var _ auth.AuthRepository = (*pg.AuthRepository)(nil)
 
 func main() {
 	// === Парсинг флагов ===
@@ -54,7 +57,7 @@ func main() {
 	defer db.Close()
 
 	authRepo := pg.NewAuthRepository(db)
-	authSvc := service.NewAuthService(authRepo, []byte(cfg.Secret))
+	authSvc := auth.NewAuthService(authRepo, []byte(cfg.Secret))
 
 	// === Настройка HTTP-сервера ===
 	mux := http.NewServeMux()
